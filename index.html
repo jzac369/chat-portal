@@ -45,8 +45,11 @@
       <button class="leave-btn" id="leave-room-btn">← Leave</button>
     </div>
     <div class="messages-pane" id="messages-pane"></div>
+    <div id="emoji-panel" class="emoji-panel hidden"></div>
     <div class="input-bar">
+      <button class="icon-btn" id="emoji-btn" title="Emoji">😊</button>
       <input type="text" id="msg-input" placeholder="Type a message..." maxlength="500">
+      <button class="icon-btn" id="mic-btn" title="Record a voice message (max 1 min)">🎤</button>
       <button class="send-btn" id="send-btn" title="Send">➤</button>
     </div>
   </div>
@@ -65,6 +68,13 @@
       <h2>Overview</h2>
       <div id="global-stats" class="stats-row"></div>
       <button class="save-btn small-btn" id="refresh-stats" style="margin-top:10px;">Refresh stats</button>
+    </div>
+
+    <div class="card admin-card">
+      <h2>Chat logs &amp; export</h2>
+      <p class="field-label" style="margin-top:0;">View the full conversation history per room, or download everything at once.</p>
+      <button class="save-btn" id="download-all-history">⬇ Download complete chat history (all rooms)</button>
+      <div id="chat-logs-container" style="margin-top:14px;"></div>
     </div>
 
     <div class="card admin-card">

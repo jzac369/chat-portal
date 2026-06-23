@@ -14,12 +14,17 @@ const DEFAULT_ROOMS = [
   {id:"bloom", name:"Bloom", color1:"#fce7f3", color2:"#fbcfe0", text:"#9d174d", maxParticipants:0, locked:false},
   {id:"drift", name:"Drift", color1:"#dcfce7", color2:"#bbf7d0", text:"#14532d", maxParticipants:0, locked:false},
   {id:"haven", name:"Haven", color1:"#ede9fe", color2:"#ddd6fe", text:"#4c1d95", maxParticipants:0, locked:false},
-  {id:"lumen", name:"Lumen", color1:"#fef3c7", color2:"#fde68a", text:"#78350f", maxParticipants:0, locked:false}
+  {id:"lumen", name:"Lumen", color1:"#fef3c7", color2:"#fde68a", text:"#78350f", maxParticipants:0, locked:false},
+  {id:"ember", name:"Ember", color1:"#ffe4e0", color2:"#ffc9be", text:"#9a2e1f", maxParticipants:0, locked:false}
 ];
 let ADMIN_PASSWORD = "olejomalba2026";
 
 const PRESENCE_TTL = 30000; // ms — presence doc considered "active" if updated within this window
 const HEARTBEAT_INTERVAL = 15000;
+const VOICE_MAX_MS = 60000;     // max recording length
+const VOICE_LIFETIME_MS = 180000; // voice notes disappear after this long
+
+const EMOJI_LIST = ['😀','😂','😍','😎','🤔','😢','😡','👍','👎','🙏','🎉','🔥','❤️','✨','😴','🤝','👏','😮','🥳','😅'];
 
 let currentNick = null;
 let currentRoom = null;
@@ -27,6 +32,9 @@ let unsubMessages = null;
 let unsubBanned = null;
 let unsubRoomConfig = null;
 let heartbeatTimer = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingTimer = null;
 
 /* ================== FIRESTORE HELPERS ================== */
 async function getDocData(col, id, fallback){
@@ -45,11 +53,17 @@ async function ensureConfig(){
     roomsDoc = { list: DEFAULT_ROOMS.map(r => ({...r, allowedNicks:[]})) };
     await setDocData('config', 'rooms', roomsDoc);
   }
-  // backfill new fields for rooms created before this update
+  // backfill new fields / new rooms added after initial setup
   let changed = false;
   roomsDoc.list.forEach(r => {
     if(r.maxParticipants === undefined){ r.maxParticipants = 0; changed = true; }
     if(r.locked === undefined){ r.locked = false; changed = true; }
+  });
+  DEFAULT_ROOMS.forEach(dr => {
+    if(!roomsDoc.list.find(r => r.id === dr.id)){
+      roomsDoc.list.push({...dr, allowedNicks:[]});
+      changed = true;
+    }
   });
   if(changed) await setDocData('config', 'rooms', roomsDoc);
 
@@ -108,7 +122,7 @@ async function renderLanding(){
     btn.style.background = `linear-gradient(150deg, ${r.color1}, ${r.color2})`;
     btn.style.color = r.text;
     const full = r.maxParticipants > 0 && count >= r.maxParticipants;
-    btn.innerHTML = `<span class="room-tile-name">${r.locked ? '🔒 ' : ''}${escapeHtml(r.name)}</span>` +
+    btn.innerHTML = `<span class="room-tile-name">${r.locked ? '🔒 ' : ''}${escapeHtml(r.name)} <span class="room-tile-suffix">room</span></span>` +
       `<span class="room-tile-count">${count}${r.maxParticipants > 0 ? ' / ' + r.maxParticipants : ''} online</span>` +
       (full ? `<span class="room-tile-full">FULL</span>` : '');
     btn.onclick = () => tryJoinRoom(r.id);
@@ -174,6 +188,7 @@ async function enterRoom(){
   header.style.color = currentRoom.text;
   document.getElementById('room-title').textContent = `${currentRoom.name} — ${currentNick}`;
   document.getElementById('messages-pane').innerHTML = '';
+  closeEmojiPanel();
 
   await postSystemMessage(`${currentNick} joined the room.`);
   await joinPresence();
@@ -181,6 +196,45 @@ async function enterRoom(){
   listenMessages();
   listenBanned();
   listenRoomLockout();
+}
+
+function renderMessageRow(m, docRef){
+  const row = document.createElement('div');
+  if(m.system){
+    row.className = 'msg-system';
+    row.textContent = m.text;
+    return row;
+  }
+  row.className = 'msg-row';
+  const nickEl = document.createElement('div');
+  nickEl.className = 'msg-nick';
+  nickEl.style.color = m.color || nickColor(m.nick);
+  nickEl.textContent = m.nick;
+  row.appendChild(nickEl);
+
+  if(m.type === 'voice'){
+    if(Date.now() > (m.expiresAt || 0)){
+      if(docRef) deleteDoc(docRef).catch(()=>{});
+      return null;
+    }
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble voice-bubble';
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.src = m.audio;
+    bubble.appendChild(audio);
+    const remain = document.createElement('span');
+    remain.className = 'voice-expiry';
+    remain.textContent = '🎙️ disappears soon';
+    bubble.appendChild(remain);
+    row.appendChild(bubble);
+  } else {
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.textContent = m._displayText !== undefined ? m._displayText : m.text;
+    row.appendChild(bubble);
+  }
+  return row;
 }
 
 function listenMessages(){
@@ -193,23 +247,11 @@ function listenMessages(){
     pane.innerHTML = '';
     snap.docs.forEach(d => {
       const m = d.data();
-      const row = document.createElement('div');
-      if(m.system){
-        row.className = 'msg-system';
-        row.textContent = m.text;
-      } else {
-        row.className = 'msg-row';
-        const nickEl = document.createElement('div');
-        nickEl.className = 'msg-nick';
-        nickEl.style.color = m.color || nickColor(m.nick);
-        nickEl.textContent = m.nick;
-        const bubble = document.createElement('div');
-        bubble.className = 'msg-bubble';
-        bubble.textContent = applyModeration(m.text, settings);
-        row.appendChild(nickEl);
-        row.appendChild(bubble);
+      if(!m.system && m.type !== 'voice'){
+        m._displayText = applyModeration(m.text, settings);
       }
-      pane.appendChild(row);
+      const row = renderMessageRow(m, d.ref);
+      if(row) pane.appendChild(row);
     });
   });
 }
@@ -250,6 +292,7 @@ async function sendMessage(){
   const msgsRef = collection(db, 'rooms', currentRoom.id, 'messages');
   await addDoc(msgsRef, {nick:currentNick, color:nickColor(currentNick), text, ts:Date.now()});
   input.value = '';
+  closeEmojiPanel();
 }
 
 async function leaveRoom(silent){
@@ -259,6 +302,7 @@ async function leaveRoom(silent){
   if(unsubMessages) unsubMessages();
   if(unsubBanned) unsubBanned();
   if(unsubRoomConfig) unsubRoomConfig();
+  stopRecordingIfActive();
   currentRoom = null;
   document.getElementById('view-room').classList.add('hidden');
   document.getElementById('view-landing').classList.remove('hidden');
@@ -266,6 +310,90 @@ async function leaveRoom(silent){
   renderLanding();
 }
 window.addEventListener('beforeunload', () => { if(currentRoom) leavePresence(); });
+
+/* ================== EMOJI PICKER ================== */
+function toggleEmojiPanel(){
+  const panel = document.getElementById('emoji-panel');
+  panel.classList.toggle('hidden');
+}
+function closeEmojiPanel(){
+  document.getElementById('emoji-panel').classList.add('hidden');
+}
+function buildEmojiPanel(){
+  const panel = document.getElementById('emoji-panel');
+  panel.innerHTML = '';
+  EMOJI_LIST.forEach(em => {
+    const span = document.createElement('button');
+    span.className = 'emoji-item';
+    span.textContent = em;
+    span.onclick = () => {
+      const input = document.getElementById('msg-input');
+      input.value += em;
+      input.focus();
+    };
+    panel.appendChild(span);
+  });
+}
+
+/* ================== VOICE MESSAGES ================== */
+function stopRecordingIfActive(){
+  if(mediaRecorder && mediaRecorder.state !== 'inactive'){
+    mediaRecorder.stop();
+  }
+  if(recordingTimer) clearTimeout(recordingTimer);
+  setMicState(false);
+}
+function setMicState(recording){
+  const micBtn = document.getElementById('mic-btn');
+  micBtn.classList.toggle('recording', recording);
+  micBtn.textContent = recording ? '⏹️' : '🎤';
+}
+
+async function toggleRecording(){
+  if(mediaRecorder && mediaRecorder.state === 'recording'){
+    mediaRecorder.stop();
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => { if(e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      setMicState(false);
+      if(recordingTimer) clearTimeout(recordingTimer);
+      if(recordedChunks.length === 0) return;
+      const blob = new Blob(recordedChunks, {type:'audio/webm'});
+      if(blob.size > 900000){
+        alert('Voice message too large — please keep it shorter.');
+        return;
+      }
+      const dataUrl = await blobToDataUrl(blob);
+      const now = Date.now();
+      const msgsRef = collection(db, 'rooms', currentRoom.id, 'messages');
+      await addDoc(msgsRef, {
+        nick:currentNick, color:nickColor(currentNick), type:'voice',
+        audio:dataUrl, ts:now, expiresAt: now + VOICE_LIFETIME_MS
+      });
+    };
+    mediaRecorder.start();
+    setMicState(true);
+    recordingTimer = setTimeout(() => {
+      if(mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    }, VOICE_MAX_MS);
+  }catch(e){
+    alert('Microphone access denied or unavailable.');
+  }
+}
+function blobToDataUrl(blob){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
 /* ================== ADMIN ================== */
 async function openAdmin(){
@@ -306,6 +434,40 @@ async function clearRoomMessages(roomId){
   await batch.commit();
 }
 
+async function getAllMessages(roomId){
+  const msgsRef = collection(db, 'rooms', roomId, 'messages');
+  const q = query(msgsRef, orderBy('ts', 'asc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => d.data());
+}
+
+function formatLogLine(m){
+  const time = new Date(m.ts).toISOString().replace('T',' ').slice(0,19);
+  if(m.system) return `[${time}] *** ${m.text}`;
+  if(m.type === 'voice') return `[${time}] ${m.nick}: [voice message]`;
+  return `[${time}] ${m.nick}: ${m.text}`;
+}
+
+function downloadTextFile(filename, content){
+  const blob = new Blob([content], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function downloadAllHistory(rooms){
+  let out = `Mosaic — full chat history export\nGenerated: ${new Date().toISOString()}\n\n`;
+  for(const room of rooms){
+    out += `\n========== ${room.name} ==========\n`;
+    const msgs = await getAllMessages(room.id);
+    if(msgs.length === 0) out += '(no messages)\n';
+    msgs.forEach(m => { out += formatLogLine(m) + '\n'; });
+  }
+  downloadTextFile(`mosaic-chat-history-${Date.now()}.txt`, out);
+}
+
 async function renderGlobalStats(rooms){
   const statsBox = document.getElementById('global-stats');
   statsBox.innerHTML = '<span class="hint">Loading stats…</span>';
@@ -322,12 +484,49 @@ async function renderGlobalStats(rooms){
   `;
 }
 
+async function renderChatLogs(rooms){
+  const container = document.getElementById('chat-logs-container');
+  container.innerHTML = '';
+  for(const room of rooms){
+    const wrap = document.createElement('div');
+    wrap.className = 'log-room-block';
+    const head = document.createElement('div');
+    head.className = 'log-room-head';
+    head.innerHTML = `<strong>${escapeHtml(room.name)}</strong>`;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'save-btn small-btn';
+    toggleBtn.textContent = 'View log';
+    const logBox = document.createElement('div');
+    logBox.className = 'log-box hidden';
+    toggleBtn.onclick = async () => {
+      if(!logBox.classList.contains('hidden')){
+        logBox.classList.add('hidden');
+        toggleBtn.textContent = 'View log';
+        return;
+      }
+      logBox.innerHTML = 'Loading…';
+      logBox.classList.remove('hidden');
+      toggleBtn.textContent = 'Hide log';
+      const msgs = await getAllMessages(room.id);
+      logBox.innerHTML = msgs.length === 0
+        ? '<span class="hint">No messages yet.</span>'
+        : msgs.map(m => `<div class="log-line">${escapeHtml(formatLogLine(m))}</div>`).join('');
+    };
+    head.appendChild(toggleBtn);
+    wrap.appendChild(head);
+    wrap.appendChild(logBox);
+    container.appendChild(wrap);
+  }
+}
+
 async function renderAdmin(){
   const {rooms, settings, banned} = await ensureConfig();
   document.getElementById('moderation-toggle').checked = !!settings.moderationOn;
   document.getElementById('keywords-input').value = (settings.keywords || []).join(', ');
 
   renderGlobalStats(rooms);
+  renderChatLogs(rooms);
+  document.getElementById('download-all-history').onclick = () => downloadAllHistory(rooms);
 
   const container = document.getElementById('rooms-admin-container');
   container.innerHTML = '';
@@ -345,7 +544,6 @@ async function renderAdmin(){
     `;
     card.appendChild(titleRow);
 
-    // Lock + capacity row
     const controlRow = document.createElement('div');
     controlRow.className = 'admin-control-row';
     controlRow.innerHTML = `
@@ -367,7 +565,6 @@ async function renderAdmin(){
     `;
     card.appendChild(capRow);
 
-    // Allowed nicks
     const block1 = document.createElement('div');
     block1.className = 'room-admin-block';
     block1.innerHTML = `<h3>Allowed members <small class="hint">(empty = open to everyone)</small></h3>`;
@@ -404,7 +601,6 @@ async function renderAdmin(){
     block1.appendChild(addRow);
     card.appendChild(block1);
 
-    // Banned users
     const block2 = document.createElement('div');
     block2.className = 'room-admin-block';
     block2.innerHTML = `<h3>Removed members</h3>`;
@@ -422,7 +618,6 @@ async function renderAdmin(){
     block2.appendChild(bannedList);
     card.appendChild(block2);
 
-    // Kick
     const block3 = document.createElement('div');
     block3.className = 'room-admin-block';
     block3.innerHTML = `<h3>Kick a member</h3>`;
@@ -444,7 +639,6 @@ async function renderAdmin(){
     block3.appendChild(kickList);
     card.appendChild(block3);
 
-    // Danger zone
     const block4 = document.createElement('div');
     block4.className = 'room-admin-block danger-zone';
     block4.innerHTML = `<h3>Danger zone</h3>`;
@@ -463,7 +657,6 @@ async function renderAdmin(){
     container.appendChild(card);
   }
 
-  // wire dynamic controls
   container.querySelectorAll('input[data-lock-room]').forEach(input => {
     input.onchange = async () => {
       const roomId = input.getAttribute('data-lock-room');
@@ -475,7 +668,6 @@ async function renderAdmin(){
         const msgsRef = collection(db, 'rooms', roomId, 'messages');
         await addDoc(msgsRef, {system:true, text:'This room has been closed by an admin.', ts:Date.now()});
       }
-      renderLanding();
     };
   });
   container.querySelectorAll('button[data-savecap-room]').forEach(btn => {
@@ -488,7 +680,6 @@ async function renderAdmin(){
       rm.maxParticipants = val;
       await setDocData('config', 'rooms', cfg);
       alert('Capacity saved.');
-      renderLanding();
     };
   });
   container.querySelectorAll('button[data-room]').forEach(btn => {
@@ -548,6 +739,8 @@ document.getElementById('save-moderation').onclick = saveModeration;
 document.getElementById('refresh-stats').onclick = refreshAdminStats;
 document.getElementById('leave-room-btn').onclick = () => leaveRoom(false);
 document.getElementById('send-btn').onclick = sendMessage;
+document.getElementById('emoji-btn').onclick = toggleEmojiPanel;
+document.getElementById('mic-btn').onclick = toggleRecording;
 document.getElementById('msg-input').addEventListener('keydown', e => {
   if(e.key === 'Enter') sendMessage();
 });
@@ -556,5 +749,5 @@ document.getElementById('nick-input').addEventListener('keydown', e => {
 });
 
 /* ================== INIT ================== */
+buildEmojiPanel();
 renderLanding();
-setInterval(() => { if(!currentRoom) renderLanding(); }, 10000); // keep online counts fresh on landing
