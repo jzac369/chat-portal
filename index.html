@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mosaic — Chat Portal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- LANDING -->
+<div id="view-landing" class="view">
+  <div class="card landing-card">
+    <h1 class="brand">Mosaic</h1>
+    <p class="subtitle">a calmer way to chat</p>
+
+    <div class="rules">
+      <h3>Community guidelines</h3>
+      <ol>
+        <li>Be respectful — no insults, slurs, or hateful language.</li>
+        <li>Keep it constructive — share ideas, not arguments.</li>
+        <li>Protect privacy — never share personal details about yourself or others.</li>
+      </ol>
+    </div>
+
+    <input type="text" id="nick-input" class="nick-input" placeholder="Choose a nickname..." maxlength="20">
+    <div id="room-grid" class="room-grid"></div>
+    <div class="error-msg" id="landing-error"></div>
+    <div class="admin-link" id="open-admin">Admin portal</div>
+  </div>
+</div>
+
+<!-- ROOM -->
+<div id="view-room" class="view hidden">
+  <div class="room-view card">
+    <div class="room-header" id="room-header">
+      <span id="room-title"></span>
+      <button class="leave-btn" id="leave-room-btn">← Leave</button>
+    </div>
+    <div class="messages-pane" id="messages-pane"></div>
+    <div class="input-bar">
+      <input type="text" id="msg-input" placeholder="Type a message..." maxlength="500">
+      <button class="send-btn" id="send-btn" title="Send">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN -->
+<div id="view-admin" class="view hidden">
+  <div class="admin-view">
+    <div class="card admin-card">
+      <h2>Admin Portal</h2>
+      <p>Moderation, room access, and member management.</p>
+      <div class="exit-admin" id="close-admin">← Back to home</div>
+    </div>
+
+    <div class="card admin-card">
+      <h2>Moderation</h2>
+      <label class="switch">
+        <input type="checkbox" id="moderation-toggle">
+        <span class="slider-round"></span>
+      </label>
+      <span class="switch-label">Enable moderation</span>
+      <p class="field-label">Blocked keywords (comma-separated):</p>
+      <textarea id="keywords-input" class="kw-input" placeholder="e.g. spam, badword, ..."></textarea>
+      <button class="save-btn" id="save-moderation">Save moderation settings</button>
+    </div>
+
+    <div id="rooms-admin-container"></div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
