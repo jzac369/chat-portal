@@ -45,6 +45,8 @@
       <div class="room-header-actions">
         <button class="header-icon-btn" id="sound-toggle-btn" title="Toggle sound notifications">🔔</button>
         <button class="header-icon-btn topic-btn" id="topic-btn" title="Get a random conversation topic">🎲 Topic</button>
+        <button class="header-icon-btn" id="dm-btn" title="Start a private chat">💬 Private</button>
+        <button class="header-icon-btn" id="block-btn" title="Block a member">🚫 Block</button>
         <button class="leave-btn" id="leave-room-btn">Exit room</button>
       </div>
     </div>
@@ -106,6 +108,32 @@
     </div>
 
     <div id="rooms-admin-container"></div>
+  </div>
+</div>
+
+<!-- MEMBER MODAL (private chat target / block target) -->
+<div id="member-modal" class="modal-overlay hidden">
+  <div class="modal-box card">
+    <div class="modal-header">
+      <h3 id="member-modal-title">Select a member</h3>
+      <button class="modal-close" id="member-modal-close">✕</button>
+    </div>
+    <div id="member-modal-list" class="modal-list"></div>
+  </div>
+</div>
+
+<!-- PRIVATE CHAT -->
+<div id="view-private" class="view hidden">
+  <div class="room-view card">
+    <div class="room-header private-header">
+      <span id="private-title"></span>
+      <button class="leave-btn" id="private-back-btn">← Back to main chat</button>
+    </div>
+    <div class="messages-pane" id="private-messages-pane"></div>
+    <div class="input-bar">
+      <input type="text" id="private-msg-input" placeholder="Type a private message..." maxlength="500">
+      <button class="send-btn" id="private-send-btn" title="Send">➤</button>
+    </div>
   </div>
 </div>
 

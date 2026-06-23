@@ -23,6 +23,8 @@ const PRESENCE_TTL = 30000;
 const HEARTBEAT_INTERVAL = 15000;
 const VOICE_MAX_MS = 60000;
 const VOICE_LIFETIME_MS = 180000;
+const INACTIVITY_LIMIT_MS = 15 * 60 * 1000;
+const MAX_BLOCKS = 3;
 
 const EMOJI_LIST = [
   '😀','😂','😍','😎','🤔','😢','😡','👍','👎','🙏',
@@ -123,6 +125,8 @@ let unsubMessages = null;
 let unsubBanned = null;
 let unsubRoomConfig = null;
 let unsubSettings = null;
+let unsubBlocks = null;
+let unsubPrivateMessages = null;
 let heartbeatTimer = null;
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -133,7 +137,9 @@ let soundEnabled = localStorage.getItem('mosaic-sound') !== 'off';
 let lastActivityTs = Date.now();
 let inactivityCheckTimer = null;
 let roomSettings = {moderationOn:false, keywords:[], autoLogoutOn:true};
-const INACTIVITY_LIMIT_MS = 15 * 60 * 1000;
+let blocksMap = {}; // { nick: [blockedNicks] }
+let currentPrivatePairId = null;
+let currentPrivatePartner = null;
 
 /* ================== FIRESTORE HELPERS ================== */
 async function getDocData(col, id, fallback){
@@ -174,6 +180,7 @@ async function ensureConfig(){
     settings.autoLogoutOn = true;
     await setDocData('config', 'settings', settings);
   }
+
   let banned = await getDocData('config', 'banned', null);
   if(!banned){
     banned = {};
@@ -224,6 +231,13 @@ async function getActiveCount(roomId){
     const now = Date.now();
     return snap.docs.filter(d => (now - (d.data().ts || 0)) < PRESENCE_TTL).length;
   }catch(e){ console.error(e); return 0; }
+}
+async function getActiveMembers(roomId){
+  try{
+    const snap = await getDocs(collection(db, 'rooms', roomId, 'presence'));
+    const now = Date.now();
+    return snap.docs.filter(d => (now - (d.data().ts || 0)) < PRESENCE_TTL).map(d => d.id);
+  }catch(e){ return []; }
 }
 async function joinPresence(){
   await setDocData('rooms/' + currentRoom.id + '/presence', currentNick, {ts: Date.now()});
@@ -334,6 +348,7 @@ async function enterRoom(){
   listenBanned();
   listenRoomLockout();
   listenSettings();
+  listenBlocks();
 }
 
 function registerActivity(){ lastActivityTs = Date.now(); }
@@ -352,6 +367,20 @@ function listenSettings(){
   });
 }
 
+function listenBlocks(){
+  if(unsubBlocks) unsubBlocks();
+  unsubBlocks = onSnapshot(doc(db, 'config', 'blocks'), (snap) => {
+    blocksMap = snap.exists() ? snap.data() : {};
+  });
+}
+
+function isHiddenFromMe(otherNick){
+  if(!currentNick || otherNick === currentNick) return false;
+  const iBlockedThem = (blocksMap[currentNick] || []).includes(otherNick);
+  const theyBlockedMe = (blocksMap[otherNick] || []).includes(currentNick);
+  return iBlockedThem || theyBlockedMe;
+}
+
 function renderMessageRow(m, docRef){
   const row = document.createElement('div');
   if(m.system){
@@ -359,6 +388,8 @@ function renderMessageRow(m, docRef){
     row.textContent = m.text;
     return row;
   }
+  if(m.nick && isHiddenFromMe(m.nick)) return null;
+
   row.className = 'msg-row';
   const nickEl = document.createElement('div');
   nickEl.className = 'msg-nick';
@@ -418,7 +449,7 @@ function listenMessages(){
       const added = snap.docChanges().filter(c => c.type === 'added');
       const hasNewFromOthers = added.some(c => {
         const data = c.doc.data();
-        return data.nick && data.nick !== currentNick;
+        return data.nick && data.nick !== currentNick && !isHiddenFromMe(data.nick);
       });
       if(hasNewFromOthers && soundEnabled) playPing();
     }
@@ -488,10 +519,12 @@ async function leaveRoom(silent, reason){
   if(unsubBanned) unsubBanned();
   if(unsubRoomConfig) unsubRoomConfig();
   if(unsubSettings) unsubSettings();
+  if(unsubBlocks) unsubBlocks();
   stopRecordingIfActive();
   const wasInactivity = reason === 'inactivity';
   currentRoom = null;
   document.getElementById('view-room').classList.add('hidden');
+  document.getElementById('view-private').classList.add('hidden');
   document.getElementById('view-landing').classList.remove('hidden');
   document.getElementById('landing-error').textContent = '';
   renderLanding();
@@ -601,6 +634,168 @@ function blobToDataUrl(blob){
   });
 }
 
+/* ================== MEMBER MODAL (shared by DM + Block) ================== */
+async function openMemberModal(mode){
+  if(!currentRoom) return;
+  const members = await getActiveMembers(currentRoom.id);
+  const others = members.filter(n => n !== currentNick);
+
+  const modal = document.getElementById('member-modal');
+  const title = document.getElementById('member-modal-title');
+  const list = document.getElementById('member-modal-list');
+  list.innerHTML = '';
+
+  if(mode === 'dm'){
+    title.textContent = 'Start a private chat with…';
+    const eligible = others.filter(n => !isHiddenFromMe(n));
+    if(eligible.length === 0){
+      list.innerHTML = '<p class="hint">No other members available right now.</p>';
+    }
+    eligible.forEach(n => {
+      const item = document.createElement('button');
+      item.className = 'member-modal-item';
+      item.innerHTML = `<span style="color:${nickColor(n)}; font-weight:600;">${escapeHtml(n)}</span>`;
+      item.onclick = () => { closeMemberModal(); openPrivateChat(n); };
+      list.appendChild(item);
+    });
+  } else if(mode === 'block'){
+    title.textContent = `Block a member (max ${MAX_BLOCKS})`;
+    const myBlocks = blocksMap[currentNick] || [];
+    const blockedSection = document.createElement('div');
+    blockedSection.innerHTML = '<p class="hint" style="margin-top:0;">Currently blocked:</p>';
+    if(myBlocks.length === 0){
+      blockedSection.innerHTML += '<p class="hint">None.</p>';
+    } else {
+      myBlocks.forEach(n => {
+        const row = document.createElement('div');
+        row.className = 'member-modal-item blocked-row';
+        row.innerHTML = `<span>${escapeHtml(n)}</span>`;
+        const unblockBtn = document.createElement('button');
+        unblockBtn.className = 'save-btn small-btn';
+        unblockBtn.textContent = 'Unblock';
+        unblockBtn.onclick = async () => { await unblockMember(n); openMemberModal('block'); };
+        row.appendChild(unblockBtn);
+        blockedSection.appendChild(row);
+      });
+    }
+    list.appendChild(blockedSection);
+
+    const divider = document.createElement('p');
+    divider.className = 'hint';
+    divider.style.marginTop = '14px';
+    divider.textContent = myBlocks.length >= MAX_BLOCKS ? 'Block limit reached.' : 'Available members:';
+    list.appendChild(divider);
+
+    others.filter(n => !myBlocks.includes(n)).forEach(n => {
+      const item = document.createElement('div');
+      item.className = 'member-modal-item';
+      item.innerHTML = `<span style="color:${nickColor(n)}; font-weight:600;">${escapeHtml(n)}</span>`;
+      const blockBtn = document.createElement('button');
+      blockBtn.className = 'danger-btn small-btn';
+      blockBtn.textContent = 'Block';
+      blockBtn.disabled = myBlocks.length >= MAX_BLOCKS;
+      blockBtn.onclick = async () => { await blockMember(n); openMemberModal('block'); };
+      item.appendChild(blockBtn);
+      list.appendChild(item);
+    });
+  }
+
+  modal.classList.remove('hidden');
+}
+function closeMemberModal(){
+  document.getElementById('member-modal').classList.add('hidden');
+}
+async function blockMember(targetNick){
+  const all = await getDocData('config', 'blocks', {});
+  const mine = all[currentNick] || [];
+  if(mine.length >= MAX_BLOCKS || mine.includes(targetNick)) return;
+  all[currentNick] = [...mine, targetNick];
+  await setDocData('config', 'blocks', all);
+}
+async function unblockMember(targetNick){
+  const all = await getDocData('config', 'blocks', {});
+  all[currentNick] = (all[currentNick] || []).filter(n => n !== targetNick);
+  await setDocData('config', 'blocks', all);
+}
+
+/* ================== PRIVATE CHAT ================== */
+function makePairId(roomId, a, b){
+  const sorted = [a, b].sort();
+  return `${roomId}__${sorted[0]}__${sorted[1]}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+async function openPrivateChat(partnerNick){
+  currentPrivatePartner = partnerNick;
+  currentPrivatePairId = makePairId(currentRoom.id, currentNick, partnerNick);
+
+  const existing = await getDocData('privatechats', currentPrivatePairId, null);
+  if(!existing){
+    await setDocData('privatechats', currentPrivatePairId, {
+      roomId: currentRoom.id,
+      roomName: currentRoom.name,
+      participants: [currentNick, partnerNick].sort(),
+      createdAt: Date.now()
+    });
+  }
+
+  document.getElementById('view-room').classList.add('hidden');
+  document.getElementById('view-private').classList.remove('hidden');
+  document.getElementById('private-title').textContent = `Private chat with ${partnerNick}`;
+  document.getElementById('private-messages-pane').innerHTML = '';
+
+  const msgsRef = collection(db, 'privatechats', currentPrivatePairId, 'messages');
+  await addDoc(msgsRef, {system:true, text:`${currentNick} opened a private chat.`, ts:Date.now()});
+
+  listenPrivateMessages();
+}
+
+function listenPrivateMessages(){
+  const msgsRef = collection(db, 'privatechats', currentPrivatePairId, 'messages');
+  const q = query(msgsRef, orderBy('ts', 'desc'), limit(200));
+  if(unsubPrivateMessages) unsubPrivateMessages();
+  unsubPrivateMessages = onSnapshot(q, (snap) => {
+    const pane = document.getElementById('private-messages-pane');
+    pane.innerHTML = '';
+    snap.docs.forEach(d => {
+      const m = d.data();
+      const row = document.createElement('div');
+      if(m.system){
+        row.className = 'msg-system';
+        row.textContent = m.text;
+      } else {
+        row.className = 'msg-row';
+        const nickEl = document.createElement('div');
+        nickEl.className = 'msg-nick';
+        nickEl.style.color = m.color || nickColor(m.nick);
+        nickEl.textContent = m.nick;
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.textContent = m.text;
+        row.appendChild(nickEl);
+        row.appendChild(bubble);
+      }
+      pane.appendChild(row);
+    });
+  });
+}
+
+async function sendPrivateMessage(){
+  const input = document.getElementById('private-msg-input');
+  const text = input.value.trim();
+  if(!text || !currentPrivatePairId) return;
+  const msgsRef = collection(db, 'privatechats', currentPrivatePairId, 'messages');
+  await addDoc(msgsRef, {nick:currentNick, color:nickColor(currentNick), text, ts:Date.now()});
+  input.value = '';
+}
+
+function backToMainChat(){
+  if(unsubPrivateMessages) unsubPrivateMessages();
+  currentPrivatePairId = null;
+  currentPrivatePartner = null;
+  document.getElementById('view-private').classList.add('hidden');
+  document.getElementById('view-room').classList.remove('hidden');
+}
+
 /* ================== ADMIN ================== */
 async function openAdmin(){
   const pass = prompt('Enter admin password:');
@@ -641,6 +836,18 @@ async function getAllMessages(roomId){
   const snap = await getDocs(q);
   return snap.docs.map(d => d.data());
 }
+async function getAllPrivateChats(){
+  try{
+    const snap = await getDocs(collection(db, 'privatechats'));
+    return snap.docs.map(d => ({id: d.id, ...d.data()}));
+  }catch(e){ return []; }
+}
+async function getPrivateMessages(pairId){
+  const msgsRef = collection(db, 'privatechats', pairId, 'messages');
+  const q = query(msgsRef, orderBy('ts', 'asc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => d.data());
+}
 function formatLogLine(m){
   const time = new Date(m.ts).toISOString().replace('T',' ').slice(0,19);
   if(m.system) return `[${time}] *** ${m.text}`;
@@ -658,8 +865,15 @@ function downloadTextFile(filename, content){
 async function downloadAllHistory(rooms){
   let out = `Good old FreeChat — full chat history export\nGenerated: ${new Date().toISOString()}\n\n`;
   for(const room of rooms){
-    out += `\n========== ${room.name} ==========\n`;
+    out += `\n========== ${room.name} (room) ==========\n`;
     const msgs = await getAllMessages(room.id);
+    if(msgs.length === 0) out += '(no messages)\n';
+    msgs.forEach(m => { out += formatLogLine(m) + '\n'; });
+  }
+  const privates = await getAllPrivateChats();
+  for(const pc of privates){
+    out += `\n========== PRIVATE: ${pc.participants.join(' & ')} (in ${pc.roomName}) ==========\n`;
+    const msgs = await getPrivateMessages(pc.id);
     if(msgs.length === 0) out += '(no messages)\n';
     msgs.forEach(m => { out += formatLogLine(m) + '\n'; });
   }
@@ -674,10 +888,12 @@ async function renderGlobalStats(rooms){
     totalMsgs += msnap.size;
     totalOnline += await getActiveCount(r.id);
   }
+  const privates = await getAllPrivateChats();
   statsBox.innerHTML = `
-    <div class="stat-pill">💬 ${totalMsgs} total messages</div>
+    <div class="stat-pill">💬 ${totalMsgs} room messages</div>
     <div class="stat-pill">🟢 ${totalOnline} online now</div>
     <div class="stat-pill">🏠 ${rooms.length} rooms</div>
+    <div class="stat-pill">🔒 ${privates.length} private chats</div>
   `;
 }
 async function renderChatLogs(rooms){
@@ -688,7 +904,7 @@ async function renderChatLogs(rooms){
     wrap.className = 'log-room-block';
     const head = document.createElement('div');
     head.className = 'log-room-head';
-    head.innerHTML = `<strong>${escapeHtml(room.name)}</strong>`;
+    head.innerHTML = `<strong>${escapeHtml(room.name)} (room)</strong>`;
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'save-btn small-btn';
     toggleBtn.textContent = 'View log';
@@ -696,9 +912,7 @@ async function renderChatLogs(rooms){
     logBox.className = 'log-box hidden';
     toggleBtn.onclick = async () => {
       if(!logBox.classList.contains('hidden')){
-        logBox.classList.add('hidden');
-        toggleBtn.textContent = 'View log';
-        return;
+        logBox.classList.add('hidden'); toggleBtn.textContent = 'View log'; return;
       }
       logBox.innerHTML = 'Loading…';
       logBox.classList.remove('hidden');
@@ -713,6 +927,46 @@ async function renderChatLogs(rooms){
     wrap.appendChild(logBox);
     container.appendChild(wrap);
   }
+
+  const privates = await getAllPrivateChats();
+  const pHead = document.createElement('h3');
+  pHead.style.marginTop = '20px';
+  pHead.textContent = 'Private chats';
+  container.appendChild(pHead);
+  if(privates.length === 0){
+    const none = document.createElement('p');
+    none.className = 'hint';
+    none.textContent = 'No private chats have been started yet.';
+    container.appendChild(none);
+  }
+  privates.forEach(pc => {
+    const wrap = document.createElement('div');
+    wrap.className = 'log-room-block';
+    const head = document.createElement('div');
+    head.className = 'log-room-head';
+    head.innerHTML = `<strong>${escapeHtml(pc.participants.join(' ↔ '))}</strong> <small class="hint">(${escapeHtml(pc.roomName)})</small>`;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'save-btn small-btn';
+    toggleBtn.textContent = 'View log';
+    const logBox = document.createElement('div');
+    logBox.className = 'log-box hidden';
+    toggleBtn.onclick = async () => {
+      if(!logBox.classList.contains('hidden')){
+        logBox.classList.add('hidden'); toggleBtn.textContent = 'View log'; return;
+      }
+      logBox.innerHTML = 'Loading…';
+      logBox.classList.remove('hidden');
+      toggleBtn.textContent = 'Hide log';
+      const msgs = await getPrivateMessages(pc.id);
+      logBox.innerHTML = msgs.length === 0
+        ? '<span class="hint">No messages yet.</span>'
+        : msgs.map(m => `<div class="log-line">${escapeHtml(formatLogLine(m))}</div>`).join('');
+    };
+    head.appendChild(toggleBtn);
+    wrap.appendChild(head);
+    wrap.appendChild(logBox);
+    container.appendChild(wrap);
+  });
 }
 async function renderAdmin(){
   const {rooms, settings, banned} = await ensureConfig();
@@ -934,6 +1188,9 @@ document.getElementById('refresh-stats').onclick = refreshAdminStats;
 document.getElementById('leave-room-btn').onclick = () => leaveRoom(false);
 document.getElementById('topic-btn').onclick = sendRandomTopic;
 document.getElementById('sound-toggle-btn').onclick = toggleSound;
+document.getElementById('dm-btn').onclick = () => openMemberModal('dm');
+document.getElementById('block-btn').onclick = () => openMemberModal('block');
+document.getElementById('member-modal-close').onclick = closeMemberModal;
 document.getElementById('send-btn').onclick = sendMessage;
 document.getElementById('emoji-btn').onclick = toggleEmojiPanel;
 document.getElementById('mic-btn').onclick = toggleRecording;
@@ -942,6 +1199,11 @@ document.getElementById('msg-input').addEventListener('keydown', e => {
 });
 document.getElementById('nick-input').addEventListener('keydown', e => {
   if(e.key === 'Enter') e.preventDefault();
+});
+document.getElementById('private-back-btn').onclick = backToMainChat;
+document.getElementById('private-send-btn').onclick = sendPrivateMessage;
+document.getElementById('private-msg-input').addEventListener('keydown', e => {
+  if(e.key === 'Enter') sendPrivateMessage();
 });
 
 /* ================== INIT ================== */

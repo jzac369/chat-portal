@@ -27,5 +27,11 @@ export const firebaseConfig = {
 //     match /rooms/{roomId}/presence/{nick} {
 //       allow read, write, delete: if true;
 //     }
+//     match /privatechats/{pairId} {
+//       allow read, write: if true;
+//     }
+//     match /privatechats/{pairId}/messages/{msgId} {
+//       allow read, create: if true;
+//     }
 //   }
 // }
