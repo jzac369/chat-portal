@@ -22,7 +22,10 @@ export const firebaseConfig = {
 //     match /rooms/{roomId}/messages/{msgId} {
 //       allow read: if true;
 //       allow create: if true;
-//       allow update, delete: if false;
+//       allow update, delete: if true; // needed for admin "clear chat" batch delete
+//     }
+//     match /rooms/{roomId}/presence/{nick} {
+//       allow read, write, delete: if true;
 //     }
 //   }
 // }

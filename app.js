@@ -1,8 +1,8 @@
 import { firebaseConfig } from './firebase-config.js';
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getFirestore, doc, getDoc, setDoc, collection, addDoc,
-  query, orderBy, limit, onSnapshot, serverTimestamp
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, addDoc, getDocs,
+  query, orderBy, limit, onSnapshot, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const app = initializeApp(firebaseConfig);
@@ -10,18 +10,23 @@ const db = getFirestore(app);
 
 /* ================== ROOM DEFINITIONS ================== */
 const DEFAULT_ROOMS = [
-  {id:"echo",  name:"Echo",  color1:"#dbeafe", color2:"#bfdbfe", text:"#1e3a8a"},
-  {id:"bloom", name:"Bloom", color1:"#fce7f3", color2:"#fbcfe0", text:"#9d174d"},
-  {id:"drift", name:"Drift", color1:"#dcfce7", color2:"#bbf7d0", text:"#14532d"},
-  {id:"haven", name:"Haven", color1:"#ede9fe", color2:"#ddd6fe", text:"#4c1d95"},
-  {id:"lumen", name:"Lumen", color1:"#fef3c7", color2:"#fde68a", text:"#78350f"}
+  {id:"echo",  name:"Echo",  color1:"#dbeafe", color2:"#bfdbfe", text:"#1e3a8a", maxParticipants:0, locked:false},
+  {id:"bloom", name:"Bloom", color1:"#fce7f3", color2:"#fbcfe0", text:"#9d174d", maxParticipants:0, locked:false},
+  {id:"drift", name:"Drift", color1:"#dcfce7", color2:"#bbf7d0", text:"#14532d", maxParticipants:0, locked:false},
+  {id:"haven", name:"Haven", color1:"#ede9fe", color2:"#ddd6fe", text:"#4c1d95", maxParticipants:0, locked:false},
+  {id:"lumen", name:"Lumen", color1:"#fef3c7", color2:"#fde68a", text:"#78350f", maxParticipants:0, locked:false}
 ];
-const ADMIN_PASSWORD = "olejomalba2026";
+let ADMIN_PASSWORD = "olejomalba2026";
+
+const PRESENCE_TTL = 30000; // ms — presence doc considered "active" if updated within this window
+const HEARTBEAT_INTERVAL = 15000;
 
 let currentNick = null;
 let currentRoom = null;
 let unsubMessages = null;
 let unsubBanned = null;
+let unsubRoomConfig = null;
+let heartbeatTimer = null;
 
 /* ================== FIRESTORE HELPERS ================== */
 async function getDocData(col, id, fallback){
@@ -40,6 +45,14 @@ async function ensureConfig(){
     roomsDoc = { list: DEFAULT_ROOMS.map(r => ({...r, allowedNicks:[]})) };
     await setDocData('config', 'rooms', roomsDoc);
   }
+  // backfill new fields for rooms created before this update
+  let changed = false;
+  roomsDoc.list.forEach(r => {
+    if(r.maxParticipants === undefined){ r.maxParticipants = 0; changed = true; }
+    if(r.locked === undefined){ r.locked = false; changed = true; }
+  });
+  if(changed) await setDocData('config', 'rooms', roomsDoc);
+
   let settings = await getDocData('config', 'settings', null);
   if(!settings){
     settings = {moderationOn:false, keywords:[]};
@@ -62,20 +75,45 @@ function nickColor(nick){
   return MEMBER_PALETTE[Math.abs(hash) % MEMBER_PALETTE.length];
 }
 
+/* ================== PRESENCE ================== */
+async function getActiveCount(roomId){
+  try{
+    const snap = await getDocs(collection(db, 'rooms', roomId, 'presence'));
+    const now = Date.now();
+    return snap.docs.filter(d => (now - (d.data().ts || 0)) < PRESENCE_TTL).length;
+  }catch(e){ console.error(e); return 0; }
+}
+
+async function joinPresence(){
+  await setDocData('rooms/' + currentRoom.id + '/presence', currentNick, {ts: Date.now()});
+}
+async function heartbeat(){
+  if(!currentRoom || !currentNick) return;
+  try{ await setDoc(doc(db, 'rooms', currentRoom.id, 'presence', currentNick), {ts: Date.now()}); }catch(e){}
+}
+async function leavePresence(){
+  if(!currentRoom || !currentNick) return;
+  try{ await deleteDoc(doc(db, 'rooms', currentRoom.id, 'presence', currentNick)); }catch(e){}
+}
+
 /* ================== LANDING ================== */
 async function renderLanding(){
   const {rooms} = await ensureConfig();
   const grid = document.getElementById('room-grid');
   grid.innerHTML = '';
-  rooms.forEach(r => {
+  for(const r of rooms){
+    const count = await getActiveCount(r.id);
     const btn = document.createElement('button');
     btn.className = 'room-tile';
     btn.style.background = `linear-gradient(150deg, ${r.color1}, ${r.color2})`;
     btn.style.color = r.text;
-    btn.textContent = r.name;
+    const full = r.maxParticipants > 0 && count >= r.maxParticipants;
+    btn.innerHTML = `<span class="room-tile-name">${r.locked ? '🔒 ' : ''}${escapeHtml(r.name)}</span>` +
+      `<span class="room-tile-count">${count}${r.maxParticipants > 0 ? ' / ' + r.maxParticipants : ''} online</span>` +
+      (full ? `<span class="room-tile-full">FULL</span>` : '');
     btn.onclick = () => tryJoinRoom(r.id);
     grid.appendChild(btn);
-  });
+  }
 }
 
 async function tryJoinRoom(roomId){
@@ -89,6 +127,10 @@ async function tryJoinRoom(roomId){
   const room = rooms.find(r => r.id === roomId);
   if(!room) return;
 
+  if(room.locked){
+    errEl.textContent = 'This room is currently closed by an admin.';
+    return;
+  }
   if(room.allowedNicks && room.allowedNicks.length > 0 && !room.allowedNicks.includes(nick)){
     errEl.textContent = 'You do not have access to this room.';
     return;
@@ -96,6 +138,13 @@ async function tryJoinRoom(roomId){
   if(banned[roomId] && banned[roomId].includes(nick)){
     errEl.textContent = 'You have been removed from this room.';
     return;
+  }
+  if(room.maxParticipants > 0){
+    const count = await getActiveCount(roomId);
+    if(count >= room.maxParticipants){
+      errEl.textContent = 'This room is full. Please try again later.';
+      return;
+    }
   }
 
   currentNick = nick;
@@ -127,8 +176,11 @@ async function enterRoom(){
   document.getElementById('messages-pane').innerHTML = '';
 
   await postSystemMessage(`${currentNick} joined the room.`);
+  await joinPresence();
+  heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL);
   listenMessages();
   listenBanned();
+  listenRoomLockout();
 }
 
 function listenMessages(){
@@ -173,6 +225,19 @@ function listenBanned(){
   });
 }
 
+function listenRoomLockout(){
+  if(unsubRoomConfig) unsubRoomConfig();
+  unsubRoomConfig = onSnapshot(doc(db, 'config', 'rooms'), (snap) => {
+    const data = snap.data();
+    if(!data || !currentRoom) return;
+    const rm = data.list.find(r => r.id === currentRoom.id);
+    if(rm && rm.locked){
+      alert('This room has been closed by an admin.');
+      leaveRoom(true);
+    }
+  });
+}
+
 async function postSystemMessage(text){
   const msgsRef = collection(db, 'rooms', currentRoom.id, 'messages');
   await addDoc(msgsRef, {system:true, text, ts:Date.now()});
@@ -189,14 +254,18 @@ async function sendMessage(){
 
 async function leaveRoom(silent){
   if(!silent && currentRoom) await postSystemMessage(`${currentNick} left the room.`);
+  await leavePresence();
+  if(heartbeatTimer) clearInterval(heartbeatTimer);
   if(unsubMessages) unsubMessages();
   if(unsubBanned) unsubBanned();
+  if(unsubRoomConfig) unsubRoomConfig();
   currentRoom = null;
   document.getElementById('view-room').classList.add('hidden');
   document.getElementById('view-landing').classList.remove('hidden');
   document.getElementById('landing-error').textContent = '';
   renderLanding();
 }
+window.addEventListener('beforeunload', () => { if(currentRoom) leavePresence(); });
 
 /* ================== ADMIN ================== */
 async function openAdmin(){
@@ -221,14 +290,36 @@ function escapeHtml(str){
 }
 
 async function getRecentNicks(roomId){
-  return new Promise((resolve) => {
+  try{
     const msgsRef = collection(db, 'rooms', roomId, 'messages');
     const q = query(msgsRef, orderBy('ts', 'desc'), limit(50));
-    onSnapshot(q, (snap) => {
-      const nicks = [...new Set(snap.docs.map(d => d.data().nick).filter(Boolean))].slice(0, 15);
-      resolve(nicks);
-    }, () => resolve([]));
-  });
+    const snap = await getDocs(q);
+    return [...new Set(snap.docs.map(d => d.data().nick).filter(Boolean))].slice(0, 15);
+  }catch(e){ return []; }
+}
+
+async function clearRoomMessages(roomId){
+  const msgsRef = collection(db, 'rooms', roomId, 'messages');
+  const snap = await getDocs(msgsRef);
+  const batch = writeBatch(db);
+  snap.docs.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+}
+
+async function renderGlobalStats(rooms){
+  const statsBox = document.getElementById('global-stats');
+  statsBox.innerHTML = '<span class="hint">Loading stats…</span>';
+  let totalMsgs = 0, totalOnline = 0;
+  for(const r of rooms){
+    const msnap = await getDocs(collection(db, 'rooms', r.id, 'messages'));
+    totalMsgs += msnap.size;
+    totalOnline += await getActiveCount(r.id);
+  }
+  statsBox.innerHTML = `
+    <div class="stat-pill">💬 ${totalMsgs} total messages</div>
+    <div class="stat-pill">🟢 ${totalOnline} online now</div>
+    <div class="stat-pill">🏠 ${rooms.length} rooms</div>
+  `;
 }
 
 async function renderAdmin(){
@@ -236,18 +327,49 @@ async function renderAdmin(){
   document.getElementById('moderation-toggle').checked = !!settings.moderationOn;
   document.getElementById('keywords-input').value = (settings.keywords || []).join(', ');
 
+  renderGlobalStats(rooms);
+
   const container = document.getElementById('rooms-admin-container');
   container.innerHTML = '';
 
   for(const room of rooms){
+    const activeCount = await getActiveCount(room.id);
     const card = document.createElement('div');
     card.className = 'card admin-card';
 
-    const title = document.createElement('h2');
-    title.textContent = room.name;
-    card.appendChild(title);
+    const titleRow = document.createElement('div');
+    titleRow.className = 'admin-room-title-row';
+    titleRow.innerHTML = `
+      <h2>${escapeHtml(room.name)}</h2>
+      <span class="online-badge">🟢 ${activeCount} online</span>
+    `;
+    card.appendChild(titleRow);
 
+    // Lock + capacity row
+    const controlRow = document.createElement('div');
+    controlRow.className = 'admin-control-row';
+    controlRow.innerHTML = `
+      <label class="switch small">
+        <input type="checkbox" data-lock-room="${room.id}" ${room.locked ? 'checked' : ''}>
+        <span class="slider-round"></span>
+      </label>
+      <span class="switch-label">Close room (prevent new joins)</span>
+    `;
+    card.appendChild(controlRow);
+
+    const capRow = document.createElement('div');
+    capRow.className = 'admin-control-row';
+    capRow.innerHTML = `
+      <span class="switch-label">Max participants:</span>
+      <input type="number" min="0" class="cap-input" data-cap-room="${room.id}" value="${room.maxParticipants || 0}" style="width:80px;">
+      <small class="hint">(0 = unlimited)</small>
+      <button class="save-btn small-btn" data-savecap-room="${room.id}">Save</button>
+    `;
+    card.appendChild(capRow);
+
+    // Allowed nicks
     const block1 = document.createElement('div');
+    block1.className = 'room-admin-block';
     block1.innerHTML = `<h3>Allowed members <small class="hint">(empty = open to everyone)</small></h3>`;
     const tagList = document.createElement('div');
     tagList.className = 'tag-list';
@@ -260,17 +382,12 @@ async function renderAdmin(){
     block1.appendChild(tagList);
 
     const addRow = document.createElement('div');
-    addRow.style.display = 'flex';
-    addRow.style.gap = '8px';
-    addRow.style.marginTop = '8px';
+    addRow.className = 'admin-inline-row';
     const addInput = document.createElement('input');
     addInput.placeholder = 'add allowed nickname';
-    addInput.style.flex = '1';
-    addInput.style.padding = '9px 12px';
-    addInput.style.borderRadius = '10px';
-    addInput.style.border = '1.5px solid #e3def6';
+    addInput.className = 'inline-input';
     const addBtn = document.createElement('button');
-    addBtn.className = 'save-btn';
+    addBtn.className = 'save-btn small-btn';
     addBtn.textContent = 'Add';
     addBtn.onclick = async () => {
       const val = addInput.value.trim();
@@ -287,6 +404,7 @@ async function renderAdmin(){
     block1.appendChild(addRow);
     card.appendChild(block1);
 
+    // Banned users
     const block2 = document.createElement('div');
     block2.className = 'room-admin-block';
     block2.innerHTML = `<h3>Removed members</h3>`;
@@ -298,9 +416,13 @@ async function renderAdmin(){
       tag.innerHTML = `${escapeHtml(n)} <button data-unban-room="${room.id}" data-unban-nick="${escapeHtml(n)}">✕</button>`;
       bannedList.appendChild(tag);
     });
+    if((banned[room.id] || []).length === 0){
+      bannedList.innerHTML = '<small class="hint">No removed members.</small>';
+    }
     block2.appendChild(bannedList);
     card.appendChild(block2);
 
+    // Kick
     const block3 = document.createElement('div');
     block3.className = 'room-admin-block';
     block3.innerHTML = `<h3>Kick a member</h3>`;
@@ -322,9 +444,53 @@ async function renderAdmin(){
     block3.appendChild(kickList);
     card.appendChild(block3);
 
+    // Danger zone
+    const block4 = document.createElement('div');
+    block4.className = 'room-admin-block danger-zone';
+    block4.innerHTML = `<h3>Danger zone</h3>`;
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'danger-btn';
+    clearBtn.textContent = 'Clear chat history';
+    clearBtn.onclick = async () => {
+      if(!confirm(`Delete all messages in "${room.name}"? This cannot be undone.`)) return;
+      await clearRoomMessages(room.id);
+      alert('Chat history cleared.');
+      renderAdmin();
+    };
+    block4.appendChild(clearBtn);
+    card.appendChild(block4);
+
     container.appendChild(card);
   }
 
+  // wire dynamic controls
+  container.querySelectorAll('input[data-lock-room]').forEach(input => {
+    input.onchange = async () => {
+      const roomId = input.getAttribute('data-lock-room');
+      const cfg = await getDocData('config', 'rooms', {list: DEFAULT_ROOMS});
+      const rm = cfg.list.find(x => x.id === roomId);
+      rm.locked = input.checked;
+      await setDocData('config', 'rooms', cfg);
+      if(input.checked){
+        const msgsRef = collection(db, 'rooms', roomId, 'messages');
+        await addDoc(msgsRef, {system:true, text:'This room has been closed by an admin.', ts:Date.now()});
+      }
+      renderLanding();
+    };
+  });
+  container.querySelectorAll('button[data-savecap-room]').forEach(btn => {
+    btn.onclick = async () => {
+      const roomId = btn.getAttribute('data-savecap-room');
+      const input = container.querySelector(`input[data-cap-room="${roomId}"]`);
+      const val = Math.max(0, parseInt(input.value, 10) || 0);
+      const cfg = await getDocData('config', 'rooms', {list: DEFAULT_ROOMS});
+      const rm = cfg.list.find(x => x.id === roomId);
+      rm.maxParticipants = val;
+      await setDocData('config', 'rooms', cfg);
+      alert('Capacity saved.');
+      renderLanding();
+    };
+  });
   container.querySelectorAll('button[data-room]').forEach(btn => {
     btn.onclick = async () => {
       const roomId = btn.getAttribute('data-room');
@@ -354,6 +520,7 @@ async function renderAdmin(){
       b2[roomId] = b2[roomId] || [];
       if(!b2[roomId].includes(nick)) b2[roomId].push(nick);
       await setDocData('config', 'banned', b2);
+      try{ await deleteDoc(doc(db, 'rooms', roomId, 'presence', nick)); }catch(e){}
       const msgsRef = collection(db, 'rooms', roomId, 'messages');
       await addDoc(msgsRef, {system:true, text:`${nick} was removed by an admin.`, ts:Date.now()});
       renderAdmin();
@@ -369,10 +536,16 @@ async function saveModeration(){
   alert('Moderation settings saved.');
 }
 
+async function refreshAdminStats(){
+  const {rooms} = await ensureConfig();
+  renderGlobalStats(rooms);
+}
+
 /* ================== EVENTS ================== */
 document.getElementById('open-admin').onclick = openAdmin;
 document.getElementById('close-admin').onclick = closeAdmin;
 document.getElementById('save-moderation').onclick = saveModeration;
+document.getElementById('refresh-stats').onclick = refreshAdminStats;
 document.getElementById('leave-room-btn').onclick = () => leaveRoom(false);
 document.getElementById('send-btn').onclick = sendMessage;
 document.getElementById('msg-input').addEventListener('keydown', e => {
@@ -384,3 +557,4 @@ document.getElementById('nick-input').addEventListener('keydown', e => {
 
 /* ================== INIT ================== */
 renderLanding();
+setInterval(() => { if(!currentRoom) renderLanding(); }, 10000); // keep online counts fresh on landing
