@@ -122,6 +122,7 @@ let currentRoom = null;
 let unsubMessages = null;
 let unsubBanned = null;
 let unsubRoomConfig = null;
+let unsubSettings = null;
 let heartbeatTimer = null;
 let mediaRecorder = null;
 let recordedChunks = [];
@@ -129,6 +130,10 @@ let recordingTimer = null;
 let recordingCountdownTimer = null;
 let isFirstSnapshot = true;
 let soundEnabled = localStorage.getItem('mosaic-sound') !== 'off';
+let lastActivityTs = Date.now();
+let inactivityCheckTimer = null;
+let roomSettings = {moderationOn:false, keywords:[], autoLogoutOn:true};
+const INACTIVITY_LIMIT_MS = 15 * 60 * 1000;
 
 /* ================== FIRESTORE HELPERS ================== */
 async function getDocData(col, id, fallback){
@@ -162,7 +167,11 @@ async function ensureConfig(){
 
   let settings = await getDocData('config', 'settings', null);
   if(!settings){
-    settings = {moderationOn:false, keywords:[]};
+    settings = {moderationOn:false, keywords:[], autoLogoutOn:true};
+    await setDocData('config', 'settings', settings);
+  }
+  if(settings.autoLogoutOn === undefined){
+    settings.autoLogoutOn = true;
     await setDocData('config', 'settings', settings);
   }
   let banned = await getDocData('config', 'banned', null);
@@ -272,6 +281,13 @@ async function tryJoinRoom(roomId){
       errEl.textContent = 'This room is full. Please try again later.'; return;
     }
   }
+  try{
+    const presenceSnap = await getDoc(doc(db, 'rooms', roomId, 'presence', nick));
+    if(presenceSnap.exists() && (Date.now() - (presenceSnap.data().ts || 0)) < PRESENCE_TTL){
+      errEl.textContent = 'This nickname is currently taken in this room. Please choose another.';
+      return;
+    }
+  }catch(e){}
 
   currentNick = nick;
   currentRoom = room;
@@ -304,12 +320,36 @@ async function enterRoom(){
   updateSoundBtn();
   isFirstSnapshot = true;
 
+  roomSettings = await getDocData('config', 'settings', {moderationOn:false, keywords:[], autoLogoutOn:true});
+  lastActivityTs = Date.now();
+  document.addEventListener('keydown', registerActivity);
+  document.addEventListener('mousedown', registerActivity);
+  document.addEventListener('touchstart', registerActivity);
+  inactivityCheckTimer = setInterval(checkInactivity, 30000);
+
   await postSystemMessage(`${currentNick} joined the room.`);
   await joinPresence();
   heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL);
   listenMessages();
   listenBanned();
   listenRoomLockout();
+  listenSettings();
+}
+
+function registerActivity(){ lastActivityTs = Date.now(); }
+
+function checkInactivity(){
+  if(!currentRoom || !roomSettings.autoLogoutOn) return;
+  if(Date.now() - lastActivityTs > INACTIVITY_LIMIT_MS){
+    leaveRoom(false, 'inactivity');
+  }
+}
+
+function listenSettings(){
+  if(unsubSettings) unsubSettings();
+  unsubSettings = onSnapshot(doc(db, 'config', 'settings'), (snap) => {
+    if(snap.exists()) roomSettings = snap.data();
+  });
 }
 
 function renderMessageRow(m, docRef){
@@ -328,7 +368,13 @@ function renderMessageRow(m, docRef){
 
   if(m.type === 'voice'){
     if(Date.now() > (m.expiresAt || 0)){
-      if(docRef) deleteDoc(docRef).catch(()=>{});
+      if(docRef){
+        setDoc(docRef, {
+          system:true,
+          text:`${m.nick}'s voice message has dissolved...`,
+          ts:m.ts
+        }).catch(()=>{});
+      }
       return null;
     }
     const bubble = document.createElement('div');
@@ -426,19 +472,30 @@ async function sendRandomTopic(){
   await addDoc(msgsRef, {system:true, text:`🎲 Topic: ${topic}`, ts:Date.now()});
 }
 
-async function leaveRoom(silent){
-  if(!silent && currentRoom) await postSystemMessage(`${currentNick} left the room.`);
+async function leaveRoom(silent, reason){
+  if(reason === 'inactivity'){
+    await postSystemMessage(`${currentNick} was logged out due to inactivity.`);
+  } else if(!silent && currentRoom){
+    await postSystemMessage(`${currentNick} left the room.`);
+  }
   await leavePresence();
   if(heartbeatTimer) clearInterval(heartbeatTimer);
+  if(inactivityCheckTimer) clearInterval(inactivityCheckTimer);
+  document.removeEventListener('keydown', registerActivity);
+  document.removeEventListener('mousedown', registerActivity);
+  document.removeEventListener('touchstart', registerActivity);
   if(unsubMessages) unsubMessages();
   if(unsubBanned) unsubBanned();
   if(unsubRoomConfig) unsubRoomConfig();
+  if(unsubSettings) unsubSettings();
   stopRecordingIfActive();
+  const wasInactivity = reason === 'inactivity';
   currentRoom = null;
   document.getElementById('view-room').classList.add('hidden');
   document.getElementById('view-landing').classList.remove('hidden');
   document.getElementById('landing-error').textContent = '';
   renderLanding();
+  if(wasInactivity) showToast('You were logged out due to inactivity. You can rejoin anytime with the same nickname.');
 }
 window.addEventListener('beforeunload', () => { if(currentRoom) leavePresence(); });
 
@@ -661,6 +718,7 @@ async function renderAdmin(){
   const {rooms, settings, banned} = await ensureConfig();
   document.getElementById('moderation-toggle').checked = !!settings.moderationOn;
   document.getElementById('keywords-input').value = (settings.keywords || []).join(', ');
+  document.getElementById('autologout-toggle').checked = settings.autoLogoutOn !== false;
 
   renderGlobalStats(rooms);
   renderChatLogs(rooms);
@@ -852,8 +910,15 @@ async function saveModeration(){
   const on = document.getElementById('moderation-toggle').checked;
   const kwRaw = document.getElementById('keywords-input').value;
   const keywords = kwRaw.split(',').map(s => s.trim()).filter(Boolean);
-  await setDocData('config', 'settings', {moderationOn:on, keywords});
+  const current = await getDocData('config', 'settings', {autoLogoutOn:true});
+  await setDocData('config', 'settings', {...current, moderationOn:on, keywords});
   alert('Moderation settings saved.');
+}
+async function saveAutoLogout(){
+  const on = document.getElementById('autologout-toggle').checked;
+  const current = await getDocData('config', 'settings', {moderationOn:false, keywords:[]});
+  await setDocData('config', 'settings', {...current, autoLogoutOn:on});
+  alert('Session settings saved.');
 }
 async function refreshAdminStats(){
   const {rooms} = await ensureConfig();
@@ -864,6 +929,7 @@ async function refreshAdminStats(){
 document.getElementById('open-admin').onclick = openAdmin;
 document.getElementById('close-admin').onclick = closeAdmin;
 document.getElementById('save-moderation').onclick = saveModeration;
+document.getElementById('save-autologout').onclick = saveAutoLogout;
 document.getElementById('refresh-stats').onclick = refreshAdminStats;
 document.getElementById('leave-room-btn').onclick = () => leaveRoom(false);
 document.getElementById('topic-btn').onclick = sendRandomTopic;
