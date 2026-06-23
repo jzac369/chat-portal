@@ -19,12 +19,103 @@ const DEFAULT_ROOMS = [
 ];
 let ADMIN_PASSWORD = "olejomalba2026";
 
-const PRESENCE_TTL = 30000; // ms — presence doc considered "active" if updated within this window
+const PRESENCE_TTL = 30000;
 const HEARTBEAT_INTERVAL = 15000;
-const VOICE_MAX_MS = 60000;     // max recording length
-const VOICE_LIFETIME_MS = 180000; // voice notes disappear after this long
+const VOICE_MAX_MS = 60000;
+const VOICE_LIFETIME_MS = 180000;
 
-const EMOJI_LIST = ['😀','😂','😍','😎','🤔','😢','😡','👍','👎','🙏','🎉','🔥','❤️','✨','😴','🤝','👏','😮','🥳','😅'];
+const EMOJI_LIST = [
+  '😀','😂','😍','😎','🤔','😢','😡','👍','👎','🙏',
+  '🎉','🔥','❤️','✨','😴','🤝','👏','😮','🥳','😅',
+  '😘','🙃','😇','🤩','🥺','😬','🤯','🥶','🤗','😜',
+  '🙄','😏','🤤','😱','🤪','😤','🥰','😆','🫠','🤓',
+  '👀','💯','🙌','🤙','✌️','🫶','💪','🧠','🍀','🌈',
+  '☕','🍕','🎶','📷','🚀','🐶','🐱','🌙','⭐','💤'
+];
+
+const TOPIC_LIST = [
+  "Talk about your most embarrassing memory from the past :)",
+  "What's the best advice you've ever received?",
+  "If you could time-travel, which decade would you visit?",
+  "Describe your dream vacation destination.",
+  "What's a skill you wish you had?",
+  "Share your favorite childhood memory.",
+  "What's the weirdest food combination you actually enjoy?",
+  "If you could have dinner with anyone, alive or dead, who would it be?",
+  "What's a movie you can watch over and over again?",
+  "What's the last thing that made you laugh really hard?",
+  "If you won the lottery tomorrow, what's the first thing you'd do?",
+  "What's your go-to comfort food?",
+  "Describe your perfect lazy Sunday.",
+  "What's a hobby you've always wanted to try?",
+  "What's the most spontaneous thing you've ever done?",
+  "If you could instantly master one language, which would it be?",
+  "What's a book or show that completely changed your perspective?",
+  "What's your favorite season and why?",
+  "If animals could talk, which one would be the rudest?",
+  "What's the best gift you've ever received?",
+  "Describe a moment when you felt truly proud of yourself.",
+  "What's your go-to karaoke song?",
+  "If you could live in any fictional universe, which one would you pick?",
+  "What's something you believed as a kid that turned out to be wrong?",
+  "What's your favorite way to relax after a long day?",
+  "If you had to eat one meal for the rest of your life, what would it be?",
+  "What's a small thing that instantly improves your mood?",
+  "Describe your dream house in three words.",
+  "What's the most beautiful place you've ever visited?",
+  "If you could swap lives with someone for a day, who would it be?",
+  "What's a tradition from your family that you love?",
+  "What's your favorite quote or saying?",
+  "If you could learn any instrument overnight, which would you choose?",
+  "What's the best concert or live show you've ever been to?",
+  "What's a fear you've managed to overcome?",
+  "If you had a superpower, what would you do with it first?",
+  "What's the funniest thing a pet has ever done in front of you?",
+  "What's your favorite way to spend a rainy day?",
+  "If you could only keep five apps on your phone, which would they be?",
+  "What's a city you'd love to live in someday?",
+  "What's the best piece of advice you'd give your younger self?",
+  "Describe your ideal weekend getaway.",
+  "What's something on your bucket list?",
+  "If you could time-travel to witness one historical event, what would it be?",
+  "What's your favorite smell and why?",
+  "What's a talent you have that surprises people?",
+  "If you could redesign your hometown, what would you change?",
+  "What's a song that always puts you in a good mood?",
+  "What's the most adventurous thing you'd like to try?",
+  "If you could be any fictional character for a day, who would you be?",
+  "What's your favorite memory with friends?",
+  "What's something you're really grateful for today?",
+  "If you had an extra hour every day, how would you spend it?",
+  "What's the best compliment you've ever received?",
+  "What's a habit you're proud of building?",
+  "If you could only watch one genre of movies forever, which would it be?",
+  "What's your favorite holiday and why?",
+  "What's something that always makes you nostalgic?",
+  "If you could design your own holiday, what would it celebrate?",
+  "What's a place you'd love to revisit?",
+  "What's your favorite way to spend time with family?",
+  "If you could ask a fortune teller one question, what would it be?",
+  "What's the most useful thing you've learned this year?",
+  "What's a dish you'd love to learn how to cook?",
+  "If your life had a theme song, what would it be?",
+  "What's the best piece of feedback you've ever received?",
+  "What's a small win you had this week?",
+  "If you could time-travel one year into the future, what would you check first?",
+  "What's something you do differently than most people?",
+  "What's the most interesting fact you know?",
+  "If you could only listen to one album for the rest of your life, which would it be?",
+  "What's a place that feels like home to you?",
+  "What's your favorite way to start the morning?",
+  "If you could meet your future self, what would you ask?",
+  "What's a goal you're currently working towards?",
+  "What's the kindest thing a stranger has ever done for you?",
+  "If you could change one rule of life, what would it be?",
+  "What's your favorite way to celebrate good news?",
+  "What's a lesson you learned the hard way?",
+  "If you could instantly become an expert in something, what would it be?",
+  "What's the best advice for staying motivated?"
+];
 
 let currentNick = null;
 let currentRoom = null;
@@ -35,6 +126,9 @@ let heartbeatTimer = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let recordingTimer = null;
+let recordingCountdownTimer = null;
+let isFirstSnapshot = true;
+let soundEnabled = localStorage.getItem('mosaic-sound') !== 'off';
 
 /* ================== FIRESTORE HELPERS ================== */
 async function getDocData(col, id, fallback){
@@ -53,7 +147,6 @@ async function ensureConfig(){
     roomsDoc = { list: DEFAULT_ROOMS.map(r => ({...r, allowedNicks:[]})) };
     await setDocData('config', 'rooms', roomsDoc);
   }
-  // backfill new fields / new rooms added after initial setup
   let changed = false;
   roomsDoc.list.forEach(r => {
     if(r.maxParticipants === undefined){ r.maxParticipants = 0; changed = true; }
@@ -81,12 +174,38 @@ async function ensureConfig(){
   return {rooms: roomsDoc.list, settings, banned};
 }
 
-/* ================== COLOR HASH (member name colors) ================== */
+/* ================== COLOR HASH ================== */
 const MEMBER_PALETTE = ['#7c3aed','#db2777','#0891b2','#059669','#d97706','#dc2626','#4338ca','#0d9488'];
 function nickColor(nick){
   let hash = 0;
   for(let i=0;i<nick.length;i++){ hash = nick.charCodeAt(i) + ((hash<<5)-hash); }
   return MEMBER_PALETTE[Math.abs(hash) % MEMBER_PALETTE.length];
+}
+
+/* ================== SOUND NOTIFICATION ================== */
+function playPing(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  }catch(e){}
+}
+function toggleSound(){
+  soundEnabled = !soundEnabled;
+  localStorage.setItem('mosaic-sound', soundEnabled ? 'on' : 'off');
+  updateSoundBtn();
+}
+function updateSoundBtn(){
+  const btn = document.getElementById('sound-toggle-btn');
+  if(btn) btn.textContent = soundEnabled ? '🔔' : '🔕';
 }
 
 /* ================== PRESENCE ================== */
@@ -97,7 +216,6 @@ async function getActiveCount(roomId){
     return snap.docs.filter(d => (now - (d.data().ts || 0)) < PRESENCE_TTL).length;
   }catch(e){ console.error(e); return 0; }
 }
-
 async function joinPresence(){
   await setDocData('rooms/' + currentRoom.id + '/presence', currentNick, {ts: Date.now()});
 }
@@ -141,23 +259,17 @@ async function tryJoinRoom(roomId){
   const room = rooms.find(r => r.id === roomId);
   if(!room) return;
 
-  if(room.locked){
-    errEl.textContent = 'This room is currently closed by an admin.';
-    return;
-  }
+  if(room.locked){ errEl.textContent = 'This room is currently closed by an admin.'; return; }
   if(room.allowedNicks && room.allowedNicks.length > 0 && !room.allowedNicks.includes(nick)){
-    errEl.textContent = 'You do not have access to this room.';
-    return;
+    errEl.textContent = 'You do not have access to this room.'; return;
   }
   if(banned[roomId] && banned[roomId].includes(nick)){
-    errEl.textContent = 'You have been removed from this room.';
-    return;
+    errEl.textContent = 'You have been removed from this room.'; return;
   }
   if(room.maxParticipants > 0){
     const count = await getActiveCount(roomId);
     if(count >= room.maxParticipants){
-      errEl.textContent = 'This room is full. Please try again later.';
-      return;
+      errEl.textContent = 'This room is full. Please try again later.'; return;
     }
   }
 
@@ -189,6 +301,8 @@ async function enterRoom(){
   document.getElementById('room-title').textContent = `${currentRoom.name} — ${currentNick}`;
   document.getElementById('messages-pane').innerHTML = '';
   closeEmojiPanel();
+  updateSoundBtn();
+  isFirstSnapshot = true;
 
   await postSystemMessage(`${currentNick} joined the room.`);
   await joinPresence();
@@ -253,6 +367,16 @@ function listenMessages(){
       const row = renderMessageRow(m, d.ref);
       if(row) pane.appendChild(row);
     });
+
+    if(!isFirstSnapshot){
+      const added = snap.docChanges().filter(c => c.type === 'added');
+      const hasNewFromOthers = added.some(c => {
+        const data = c.doc.data();
+        return data.nick && data.nick !== currentNick;
+      });
+      if(hasNewFromOthers && soundEnabled) playPing();
+    }
+    isFirstSnapshot = false;
   });
 }
 
@@ -295,6 +419,13 @@ async function sendMessage(){
   closeEmojiPanel();
 }
 
+async function sendRandomTopic(){
+  if(!currentRoom) return;
+  const topic = TOPIC_LIST[Math.floor(Math.random() * TOPIC_LIST.length)];
+  const msgsRef = collection(db, 'rooms', currentRoom.id, 'messages');
+  await addDoc(msgsRef, {system:true, text:`🎲 Topic: ${topic}`, ts:Date.now()});
+}
+
 async function leaveRoom(silent){
   if(!silent && currentRoom) await postSystemMessage(`${currentNick} left the room.`);
   await leavePresence();
@@ -311,10 +442,19 @@ async function leaveRoom(silent){
 }
 window.addEventListener('beforeunload', () => { if(currentRoom) leavePresence(); });
 
+/* ================== TOAST ================== */
+function showToast(text){
+  const toast = document.createElement('div');
+  toast.className = 'toast-msg';
+  toast.textContent = text;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('toast-fade'), 2600);
+  setTimeout(() => toast.remove(), 3200);
+}
+
 /* ================== EMOJI PICKER ================== */
 function toggleEmojiPanel(){
-  const panel = document.getElementById('emoji-panel');
-  panel.classList.toggle('hidden');
+  document.getElementById('emoji-panel').classList.toggle('hidden');
 }
 function closeEmojiPanel(){
   document.getElementById('emoji-panel').classList.add('hidden');
@@ -337,16 +477,16 @@ function buildEmojiPanel(){
 
 /* ================== VOICE MESSAGES ================== */
 function stopRecordingIfActive(){
-  if(mediaRecorder && mediaRecorder.state !== 'inactive'){
-    mediaRecorder.stop();
-  }
+  if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   if(recordingTimer) clearTimeout(recordingTimer);
+  if(recordingCountdownTimer) clearInterval(recordingCountdownTimer);
   setMicState(false);
 }
 function setMicState(recording){
   const micBtn = document.getElementById('mic-btn');
   micBtn.classList.toggle('recording', recording);
   micBtn.textContent = recording ? '⏹️' : '🎤';
+  document.getElementById('rec-countdown').classList.toggle('hidden', !recording);
 }
 
 async function toggleRecording(){
@@ -363,6 +503,7 @@ async function toggleRecording(){
       stream.getTracks().forEach(t => t.stop());
       setMicState(false);
       if(recordingTimer) clearTimeout(recordingTimer);
+      if(recordingCountdownTimer) clearInterval(recordingCountdownTimer);
       if(recordedChunks.length === 0) return;
       const blob = new Blob(recordedChunks, {type:'audio/webm'});
       if(blob.size > 900000){
@@ -376,9 +517,17 @@ async function toggleRecording(){
         nick:currentNick, color:nickColor(currentNick), type:'voice',
         audio:dataUrl, ts:now, expiresAt: now + VOICE_LIFETIME_MS
       });
+      showToast('🎙️ Voice message sent — it will disappear in 3 minutes.');
     };
     mediaRecorder.start();
     setMicState(true);
+    let remaining = VOICE_MAX_MS / 1000;
+    document.getElementById('rec-countdown').textContent = remaining + 's';
+    recordingCountdownTimer = setInterval(() => {
+      remaining -= 1;
+      document.getElementById('rec-countdown').textContent = Math.max(remaining,0) + 's';
+      if(remaining <= 0) clearInterval(recordingCountdownTimer);
+    }, 1000);
     recordingTimer = setTimeout(() => {
       if(mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     }, VOICE_MAX_MS);
@@ -406,17 +555,14 @@ async function openAdmin(){
   document.getElementById('view-admin').classList.remove('hidden');
   await renderAdmin();
 }
-
 function closeAdmin(){
   document.getElementById('view-admin').classList.add('hidden');
   document.getElementById('view-landing').classList.remove('hidden');
   renderLanding();
 }
-
 function escapeHtml(str){
   return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
 async function getRecentNicks(roomId){
   try{
     const msgsRef = collection(db, 'rooms', roomId, 'messages');
@@ -425,7 +571,6 @@ async function getRecentNicks(roomId){
     return [...new Set(snap.docs.map(d => d.data().nick).filter(Boolean))].slice(0, 15);
   }catch(e){ return []; }
 }
-
 async function clearRoomMessages(roomId){
   const msgsRef = collection(db, 'rooms', roomId, 'messages');
   const snap = await getDocs(msgsRef);
@@ -433,21 +578,18 @@ async function clearRoomMessages(roomId){
   snap.docs.forEach(d => batch.delete(d.ref));
   await batch.commit();
 }
-
 async function getAllMessages(roomId){
   const msgsRef = collection(db, 'rooms', roomId, 'messages');
   const q = query(msgsRef, orderBy('ts', 'asc'));
   const snap = await getDocs(q);
   return snap.docs.map(d => d.data());
 }
-
 function formatLogLine(m){
   const time = new Date(m.ts).toISOString().replace('T',' ').slice(0,19);
   if(m.system) return `[${time}] *** ${m.text}`;
   if(m.type === 'voice') return `[${time}] ${m.nick}: [voice message]`;
   return `[${time}] ${m.nick}: ${m.text}`;
 }
-
 function downloadTextFile(filename, content){
   const blob = new Blob([content], {type:'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
@@ -456,18 +598,16 @@ function downloadTextFile(filename, content){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
 async function downloadAllHistory(rooms){
-  let out = `Mosaic — full chat history export\nGenerated: ${new Date().toISOString()}\n\n`;
+  let out = `Good old FreeChat — full chat history export\nGenerated: ${new Date().toISOString()}\n\n`;
   for(const room of rooms){
     out += `\n========== ${room.name} ==========\n`;
     const msgs = await getAllMessages(room.id);
     if(msgs.length === 0) out += '(no messages)\n';
     msgs.forEach(m => { out += formatLogLine(m) + '\n'; });
   }
-  downloadTextFile(`mosaic-chat-history-${Date.now()}.txt`, out);
+  downloadTextFile(`freechat-history-${Date.now()}.txt`, out);
 }
-
 async function renderGlobalStats(rooms){
   const statsBox = document.getElementById('global-stats');
   statsBox.innerHTML = '<span class="hint">Loading stats…</span>';
@@ -483,7 +623,6 @@ async function renderGlobalStats(rooms){
     <div class="stat-pill">🏠 ${rooms.length} rooms</div>
   `;
 }
-
 async function renderChatLogs(rooms){
   const container = document.getElementById('chat-logs-container');
   container.innerHTML = '';
@@ -518,7 +657,6 @@ async function renderChatLogs(rooms){
     container.appendChild(wrap);
   }
 }
-
 async function renderAdmin(){
   const {rooms, settings, banned} = await ensureConfig();
   document.getElementById('moderation-toggle').checked = !!settings.moderationOn;
@@ -538,10 +676,7 @@ async function renderAdmin(){
 
     const titleRow = document.createElement('div');
     titleRow.className = 'admin-room-title-row';
-    titleRow.innerHTML = `
-      <h2>${escapeHtml(room.name)}</h2>
-      <span class="online-badge">🟢 ${activeCount} online</span>
-    `;
+    titleRow.innerHTML = `<h2>${escapeHtml(room.name)}</h2><span class="online-badge">🟢 ${activeCount} online</span>`;
     card.appendChild(titleRow);
 
     const controlRow = document.createElement('div');
@@ -577,7 +712,6 @@ async function renderAdmin(){
       tagList.appendChild(tag);
     });
     block1.appendChild(tagList);
-
     const addRow = document.createElement('div');
     addRow.className = 'admin-inline-row';
     const addInput = document.createElement('input');
@@ -596,8 +730,7 @@ async function renderAdmin(){
       await setDocData('config', 'rooms', cfg);
       renderAdmin();
     };
-    addRow.appendChild(addInput);
-    addRow.appendChild(addBtn);
+    addRow.appendChild(addInput); addRow.appendChild(addBtn);
     block1.appendChild(addRow);
     card.appendChild(block1);
 
@@ -612,9 +745,7 @@ async function renderAdmin(){
       tag.innerHTML = `${escapeHtml(n)} <button data-unban-room="${room.id}" data-unban-nick="${escapeHtml(n)}">✕</button>`;
       bannedList.appendChild(tag);
     });
-    if((banned[room.id] || []).length === 0){
-      bannedList.innerHTML = '<small class="hint">No removed members.</small>';
-    }
+    if((banned[room.id] || []).length === 0) bannedList.innerHTML = '<small class="hint">No removed members.</small>';
     block2.appendChild(bannedList);
     card.appendChild(block2);
 
@@ -632,8 +763,7 @@ async function renderAdmin(){
     });
     if(recentNicks.length === 0){
       const none = document.createElement('small');
-      none.className = 'hint';
-      none.textContent = 'No recent members.';
+      none.className = 'hint'; none.textContent = 'No recent members.';
       block3.appendChild(none);
     }
     block3.appendChild(kickList);
@@ -718,7 +848,6 @@ async function renderAdmin(){
     };
   });
 }
-
 async function saveModeration(){
   const on = document.getElementById('moderation-toggle').checked;
   const kwRaw = document.getElementById('keywords-input').value;
@@ -726,7 +855,6 @@ async function saveModeration(){
   await setDocData('config', 'settings', {moderationOn:on, keywords});
   alert('Moderation settings saved.');
 }
-
 async function refreshAdminStats(){
   const {rooms} = await ensureConfig();
   renderGlobalStats(rooms);
@@ -738,6 +866,8 @@ document.getElementById('close-admin').onclick = closeAdmin;
 document.getElementById('save-moderation').onclick = saveModeration;
 document.getElementById('refresh-stats').onclick = refreshAdminStats;
 document.getElementById('leave-room-btn').onclick = () => leaveRoom(false);
+document.getElementById('topic-btn').onclick = sendRandomTopic;
+document.getElementById('sound-toggle-btn').onclick = toggleSound;
 document.getElementById('send-btn').onclick = sendMessage;
 document.getElementById('emoji-btn').onclick = toggleEmojiPanel;
 document.getElementById('mic-btn').onclick = toggleRecording;
@@ -750,4 +880,5 @@ document.getElementById('nick-input').addEventListener('keydown', e => {
 
 /* ================== INIT ================== */
 buildEmojiPanel();
+updateSoundBtn();
 renderLanding();

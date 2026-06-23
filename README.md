@@ -1,4 +1,4 @@
-# Mosaic — Chat Portal
+# Good old FreeChat
 
 A lightweight, pastel-themed multi-room chat portal with admin moderation, built with plain HTML/CSS/JS and Firebase Firestore.
 
@@ -8,6 +8,7 @@ A lightweight, pastel-themed multi-room chat portal with admin moderation, built
 - **Drift** (green)
 - **Haven** (lavender)
 - **Lumen** (peach)
+- **Ember** (coral)
 
 ## Setup
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Mosaic — Chat Portal</title>
+<title>Good old FreeChat</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -18,8 +18,8 @@
 
   <div class="card landing-card">
     <div class="brand-badge">✦ live chat ✦</div>
-    <h1 class="brand">Mosaic</h1>
-    <p class="subtitle">five rooms, endless conversations — pick your color</p>
+    <h1 class="brand"><span class="brand-muted">Good old</span> FreeChat</h1>
+    <p class="subtitle">six rooms, endless conversations — pick your color</p>
 
     <div class="rules">
       <h3>Community guidelines</h3>
@@ -42,13 +42,18 @@
   <div class="room-view card">
     <div class="room-header" id="room-header">
       <span id="room-title"></span>
-      <button class="leave-btn" id="leave-room-btn">← Leave</button>
+      <div class="room-header-actions">
+        <button class="header-icon-btn" id="sound-toggle-btn" title="Toggle sound notifications">🔔</button>
+        <button class="header-icon-btn topic-btn" id="topic-btn" title="Get a random conversation topic">🎲 Topic</button>
+        <button class="leave-btn" id="leave-room-btn">Exit room</button>
+      </div>
     </div>
     <div class="messages-pane" id="messages-pane"></div>
     <div id="emoji-panel" class="emoji-panel hidden"></div>
     <div class="input-bar">
       <button class="icon-btn" id="emoji-btn" title="Emoji">😊</button>
       <input type="text" id="msg-input" placeholder="Type a message..." maxlength="500">
+      <span id="rec-countdown" class="rec-countdown hidden"></span>
       <button class="icon-btn" id="mic-btn" title="Record a voice message (max 1 min)">🎤</button>
       <button class="send-btn" id="send-btn" title="Send">➤</button>
     </div>

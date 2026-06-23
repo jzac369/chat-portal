@@ -82,10 +82,22 @@ body{
 }
 h1.brand{
   font-family:'Poppins',sans-serif;
-  font-size:3em;
+  font-size:2.7em;
   font-weight:800;
   margin:0;
   letter-spacing:-1px;
+}
+h1.brand .brand-muted{
+  font-weight:500;
+  font-size:0.5em;
+  color:#b7b2cc;
+  -webkit-text-fill-color:#b7b2cc;
+  background:none;
+  letter-spacing:0;
+  margin-right:6px;
+  vertical-align:middle;
+}
+h1.brand{
   background:linear-gradient(90deg,#a78bfa,#f472b6,#60a5fa,#34d399);
   background-size:200% auto;
   -webkit-background-clip:text;
@@ -176,7 +188,23 @@ input.nick-input:focus{border-color:var(--accent); box-shadow:0 0 0 4px rgba(167
   font-size:1.2em;
   font-weight:600;
   color:#2e2b3a;
+  gap:10px;
+  flex-wrap:wrap;
 }
+.room-header-actions{display:flex; align-items:center; gap:8px;}
+.header-icon-btn{
+  background:rgba(255,255,255,0.6);
+  border:1px solid rgba(0,0,0,0.08);
+  color:#2e2b3a;
+  padding:7px 12px;
+  border-radius:20px;
+  cursor:pointer;
+  font-family:'Inter',sans-serif;
+  font-size:0.82em;
+  white-space:nowrap;
+}
+.header-icon-btn:hover{background:rgba(255,255,255,0.9);}
+.topic-btn{font-weight:600;}
 .leave-btn{
   background:rgba(255,255,255,0.6);
   border:1px solid rgba(0,0,0,0.08);
@@ -218,6 +246,8 @@ input.nick-input:focus{border-color:var(--accent); box-shadow:0 0 0 4px rgba(167
 }
 .input-bar{
   display:flex;
+  flex-wrap:nowrap;
+  align-items:center;
   gap:10px;
   padding:16px 22px;
   background:#fdfcff;
@@ -344,3 +374,28 @@ small.hint{color:#aaa6c0;}
   font-family:'Inter',monospace; font-size:0.8em; line-height:1.5;
 }
 .log-line{white-space:pre-wrap; word-break:break-word; border-bottom:1px solid #f0edf9; padding:3px 0;}
+
+/* ---------- Recording countdown & toast ---------- */
+.rec-countdown{
+  font-size:0.8em; font-weight:700; color:#dc2626; min-width:30px; text-align:center; flex-shrink:0;
+}
+.toast-msg{
+  position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+  background:#2e2b3a; color:#fff; padding:10px 20px; border-radius:20px;
+  font-size:0.88em; box-shadow:0 8px 20px rgba(0,0,0,0.25);
+  z-index:999; opacity:1; transition:opacity 0.5s;
+}
+.toast-fade{opacity:0;}
+
+/* ---------- Mobile responsive: keep input bar in one row ---------- */
+@media (max-width: 480px){
+  .input-bar{ padding:10px 10px; gap:6px; }
+  .icon-btn{ width:36px; height:36px; font-size:1em; }
+  .send-btn{ width:38px; height:38px; font-size:1.05em; }
+  .input-bar input{ padding:10px 12px; font-size:0.88em; }
+  .rec-countdown{ font-size:0.7em; min-width:24px; }
+  .room-header{ padding:12px 14px; font-size:1em; }
+  .header-icon-btn{ padding:5px 9px; font-size:0.75em; }
+  .leave-btn{ padding:5px 10px; font-size:0.75em; }
+  .messages-pane{ padding:14px 16px; }
+}
