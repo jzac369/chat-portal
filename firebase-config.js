@@ -33,5 +33,8 @@ export const firebaseConfig = {
 //     match /privatechats/{pairId}/messages/{msgId} {
 //       allow read, create: if true;
 //     }
+//     match /privateInvites/{inviteId} {
+//       allow read, create, update: if true;
+//     }
 //   }
 // }

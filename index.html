@@ -122,17 +122,32 @@
   </div>
 </div>
 
+<!-- PRIVATE CHAT INVITE NOTIFICATION -->
+<div id="invite-modal" class="modal-overlay hidden">
+  <div class="modal-box card invite-box">
+    <h3 id="invite-text">Someone wants to start a private chat with you.</h3>
+    <div class="invite-actions">
+      <button class="save-btn" id="invite-accept-btn">Accept</button>
+      <button class="danger-btn" id="invite-decline-btn">Decline</button>
+    </div>
+  </div>
+</div>
+
 <!-- PRIVATE CHAT -->
-<div id="view-private" class="view hidden">
-  <div class="room-view card">
+<div id="view-private" class="view hidden private-view">
+  <div class="room-view card private-card">
     <div class="room-header private-header">
       <span id="private-title"></span>
-      <button class="leave-btn" id="private-back-btn">← Back to main chat</button>
+      <button class="leave-btn private-leave-btn" id="private-back-btn">← Back to main chat</button>
     </div>
-    <div class="messages-pane" id="private-messages-pane"></div>
-    <div class="input-bar">
+    <div class="messages-pane private-messages-pane" id="private-messages-pane"></div>
+    <div id="private-emoji-panel" class="emoji-panel private-emoji-panel hidden"></div>
+    <div class="input-bar private-input-bar">
+      <button class="icon-btn private-icon-btn" id="private-emoji-btn" title="Emoji">😊</button>
       <input type="text" id="private-msg-input" placeholder="Type a private message..." maxlength="500">
-      <button class="send-btn" id="private-send-btn" title="Send">➤</button>
+      <span id="private-rec-countdown" class="rec-countdown hidden"></span>
+      <button class="icon-btn private-icon-btn" id="private-mic-btn" title="Record a voice message (max 1 min)">🎤</button>
+      <button class="send-btn private-send-btn" id="private-send-btn" title="Send">➤</button>
     </div>
   </div>
 </div>

@@ -426,3 +426,62 @@ small.hint{color:#aaa6c0;}
 
 /* ---------- Private chat header tweak ---------- */
 .private-header{justify-content:space-between;}
+
+/* ---------- Private chat: dark pastel theme ---------- */
+.private-card{
+  background:#2b2640;
+  box-shadow:0 20px 50px rgba(20,15,40,0.45);
+}
+.private-header{
+  background:linear-gradient(120deg,#4c3a73,#382a5c) !important;
+  color:#e7e1ff !important;
+}
+.private-leave-btn{
+  background:rgba(255,255,255,0.12);
+  border:1px solid rgba(255,255,255,0.2);
+  color:#e7e1ff;
+}
+.private-leave-btn:hover{background:rgba(255,255,255,0.22);}
+.private-messages-pane{
+  background:#241f38;
+}
+.private-messages-pane .msg-bubble{
+  background:#3a3158;
+  color:#f1ecff;
+}
+.private-messages-pane .msg-system{
+  color:#9d92c9;
+}
+.private-messages-pane .voice-bubble{
+  background:#332a52;
+}
+.private-emoji-panel{
+  background:#241f38;
+  border-top:1px solid #3a3158;
+}
+.private-emoji-panel .emoji-item:hover{background:#3a3158;}
+.private-input-bar{
+  background:#241f38;
+  border-top:1px solid #3a3158;
+}
+.private-input-bar input{
+  background:#2f2748;
+  border-color:#4c3a73;
+  color:#f1ecff;
+}
+.private-input-bar input::placeholder{color:#9d92c9;}
+.private-input-bar input:focus{border-color:#a78bfa;}
+.private-icon-btn{
+  background:#2f2748;
+  border-color:#4c3a73;
+  color:#e7e1ff;
+}
+.private-icon-btn:hover{background:#3a3158;}
+.private-send-btn{
+  background:linear-gradient(135deg,#7c5fd6,#9d6fc9);
+}
+
+/* ---------- Invite modal ---------- */
+.invite-box{ text-align:center; max-width:380px; }
+.invite-box h3{ font-family:'Poppins',sans-serif; font-size:1.05em; margin-top:0; }
+.invite-actions{ display:flex; gap:10px; justify-content:center; margin-top:16px; }
